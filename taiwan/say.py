@@ -25,22 +25,26 @@ def edit_distance(a, b):
     for i, x in enumerate(a, 1):
         p, d[0] = d[0], i
         for j, y in enumerate(b, 1):
-            p, d[j] = d[j], min(d[j] + 1, d[j - 1] + 1, p + (x != y))
+            p, d[j] = d[j], min(d[j] + 1, d[j - 1] + 1, p + (not x & y))
     return d[-1]
 
 
 def syllables(R, text):
-    """念出來的音節（不含聲調）：{拼音} 照它的拼音，其他漢字用 pypinyin。
+    """念出來的音節（不含聲調），每個位置是可能讀音的集合：{拼音} 只有它那一個，其他漢字是 pypinyin 列出的所有讀音
+    （破音字任一讀音都算對：辨識結果的「着」不知道念 zhe 還是 zhuo）。
     檢查時比音節而不是比字：台灣念法（垃圾念ㄌㄜˋ ㄙㄜˋ）會被辨識成別的字（樂色），比字會誤判成念錯"""
+    from pypinyin import Style, pinyin
+
     out = []
     for tok in re.split(r"(\{[a-z]+[1-5]\})", text):
         if tok.startswith("{"):
-            out.append(tok[1:-2])
+            out.append({tok[1:-2]})
         else:
             tok = tok.translate(str.maketrans("0123456789", "零一二三四五六七八九"))
             h = re.sub(r"[^\u4e00-\u9fff]", "", R["t2s"].convert(tok))
-            out += R["lazy_pinyin"](h) if h else []
-    return [x.replace("ü", "v") for x in out]
+            # 逐字查：整段查會套詞典，「角色」只給 jue se，台灣念的 jiao se 就算錯
+            out += [{x.replace("ü", "v") for x in pinyin(c, style=Style.NORMAL, heteronym=True)[0]} for c in h]
+    return out
 
 
 def main():
@@ -58,6 +62,7 @@ def main():
     ap.add_argument("--check", action="store_true", help="用 SenseVoice 檢查每句：不是華語或音節錯誤率超過 --max-cer 就換 seed 重念")
     ap.add_argument("--max-cer", type=float, default=0.15)
     ap.add_argument("--asr", default="iic/SenseVoiceSmall", help="--check 用的辨識模型（名稱或本機資料夾）")
+    ap.add_argument("--verbose", action="store_true", help="--check 時印出每個 seed 的結果")
     ap.add_argument("--show", action="store_true", help="只印出轉換後送進模型的文字，不念")
     a = ap.parse_args()
 
@@ -109,10 +114,13 @@ def main():
             os.remove(tmp)
             m = re.match(r"<\|(\w+)\|>", r)
             lang = m.group(1) if m else "?"
+            heard = re.sub(r"<\|[^|]*\|>", "", r)
             want = syllables(R, sent)
-            cer = edit_distance(want, syllables(R, re.sub(r"<\|[^|]*\|>", "", r))) / max(1, len(want))
+            cer = edit_distance(want, syllables(R, heard)) / max(1, len(want))
             score = cer + (0 if lang == "zh" else 1)
-            note = f" seed {seed}：{lang} 音節錯誤率 {cer:.2f}"
+            note = f" seed {seed}：{lang} 音節錯誤率 {cer:.2f}，聽成「{heard}」"
+            if a.verbose:
+                print(f"  試 seed {seed}：{lang} {cer:.2f}「{heard}」", flush=True)
             if best is None or score < best[0]:
                 best = (score, wav, note)
             if lang == "zh" and cer <= a.max_cer:
