@@ -112,6 +112,8 @@ _I18N_TRANSLATIONS = {
         "ref_denoise_info": "Apply ZipEnhancer denoising to the reference audio before cloning",
         "normalize_label": "Text normalization",
         "normalize_info": "Normalize numbers, dates, and abbreviations via wetext",
+        "taiwan_label": "🇹🇼 Taiwan Mandarin readings",
+        "taiwan_info": "Read Chinese with Taiwan pronunciations (MOE dictionary + g2pW, see taiwan/README.md). Text normalization is skipped when on.",
         "cfg_label": "CFG (guidance scale)",
         "cfg_info": "Higher → closer to the prompt / reference; lower → more creative variation",
         "dit_steps_label": "LocDiT flow-matching steps",
@@ -139,6 +141,8 @@ _I18N_TRANSLATIONS = {
         "ref_denoise_info": "克隆前使用 ZipEnhancer 对参考音频进行降噪处理",
         "normalize_label": "文本规范化",
         "normalize_info": "自动规范化数字、日期及缩写（基于 wetext）",
+        "taiwan_label": "🇹🇼 台灣念法",
+        "taiwan_info": "中文照台灣的念法念（教育部辭典＋g2pW，見 taiwan/README.md）。開啟時不做文本規範化",
         "cfg_label": "CFG（引导强度）",
         "cfg_info": "数值越高 → 越贴合提示/参考音色；数值越低 → 生成风格更自由",
         "dit_steps_label": "LocDiT 流匹配迭代步数",
@@ -236,6 +240,7 @@ class VoxCPMDemo:
 
         self.voxcpm_model: Optional[voxcpm.VoxCPM] = None
         self._model_id = model_id
+        self._taiwan_resources = None
 
     def get_or_load_voxcpm(self) -> voxcpm.VoxCPM:
         if self.voxcpm_model is not None:
@@ -261,6 +266,19 @@ class VoxCPMDemo:
         )
         logger.info("ASR model loaded successfully.")
         return self.asr_model
+
+    def taiwan_spoken(self, text: str) -> str:
+        """Taiwan readings (taiwan/): characters whose Taiwan reading differs from the model's default become {pinyin}."""
+        import taiwan
+        from voxcpm.core import resolve_model_path
+
+        if self._taiwan_resources is None:
+            try:
+                model_dir = resolve_model_path(self._model_id, local_files_only=True)
+            except Exception:
+                model_dir = None
+            self._taiwan_resources = taiwan.load(model_dir=model_dir)
+        return taiwan.spoken(self._taiwan_resources, text)
 
     def prompt_wav_recognition(self, prompt_wav: Optional[str]) -> str:
         if prompt_wav is None:
@@ -309,6 +327,7 @@ class VoxCPMDemo:
         denoise: bool = True,
         inference_timesteps: int = 10,
         seed: Optional[int] = None,
+        taiwan_reading: bool = False,
     ) -> Tuple[int, np.ndarray, Optional[int]]:
         current_model = self.get_or_load_voxcpm()
 
@@ -320,6 +339,14 @@ class VoxCPMDemo:
         # Strip any parentheses (half-width/full-width) from control text to avoid
         # breaking the "(control)text" prompt format expected by the model.
         control = re.sub(r"[()（）]", "", control).strip()
+        if taiwan_reading and re.search(r"[\u4e00-\u9fff]", text):
+            import taiwan
+
+            text = self.taiwan_spoken(text)
+            do_normalize = False  # wetext would rewrite the {pinyin} hints
+            if not prompt_text:  # ultimate cloning ignores the control instruction
+                control = "，".join(x for x in (taiwan.STYLE, control) if x)
+            logger.info(f"[Taiwan readings] {text[:80]}")
         final_text = f"({control}){text}" if control else text
 
         audio_path = reference_wav_path_input if reference_wav_path_input else None
@@ -378,6 +405,7 @@ def create_demo_interface(demo: VoxCPMDemo):
         denoise: bool,
         dit_steps: int,
         seed_value,
+        taiwan_reading: bool,
     ):
         actual_prompt_text = prompt_text_value.strip() if use_prompt_text else ""
         actual_control = "" if use_prompt_text else control_instruction
@@ -392,6 +420,7 @@ def create_demo_interface(demo: VoxCPMDemo):
             denoise=denoise,
             inference_timesteps=int(dit_steps),
             seed=seed,
+            taiwan_reading=taiwan_reading,
         )
         return (sr, wav_np), last_successful_seed
 
@@ -459,6 +488,12 @@ def create_demo_interface(demo: VoxCPMDemo):
                     value=DEFAULT_TARGET_TEXT,
                     label=I18N("target_text_label"),
                     lines=3,
+                )
+                TaiwanReading = gr.Checkbox(
+                    value=True,
+                    label=I18N("taiwan_label"),
+                    elem_classes=["switch-toggle"],
+                    info=I18N("taiwan_info"),
                 )
 
                 with gr.Accordion(I18N("advanced_settings_title"), open=False):
@@ -545,6 +580,7 @@ def create_demo_interface(demo: VoxCPMDemo):
                 DoDenoisePromptAudio,
                 dit_steps,
                 seed_value,
+                TaiwanReading,
             ],
             outputs=[audio_output, seed_value],
             show_progress=True,

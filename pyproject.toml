@@ -62,6 +62,14 @@ dev = [
 timestamps = [
     "stable-ts>=2.19.1",
 ]
+taiwan = [
+    # taiwan/: Taiwan Mandarin readings (MOE dictionary + g2pW); g2pw imports requests without declaring it
+    "g2pw==0.1.1",
+    "pypinyin>=0.55.0",
+    "opencc-python-reimplemented",
+    "onnxruntime",
+    "requests",
+]
 
 [project.scripts]
 voxcpm = "voxcpm.cli:main"
