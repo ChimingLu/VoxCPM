@@ -15,7 +15,7 @@ import sys
 import numpy as np
 import soundfile as sf
 
-from . import STYLE, load, plain, spoken, split
+from . import STYLE, load, spoken, split
 
 SEEDS = (42, 7, 123, 2024, 99)
 
@@ -29,8 +29,18 @@ def edit_distance(a, b):
     return d[-1]
 
 
-def han(x):
-    return re.sub(r"[^一-鿿]", "", x.translate(str.maketrans("0123456789", "零一二三四五六七八九")))
+def syllables(R, text):
+    """念出來的音節（不含聲調）：{拼音} 照它的拼音，其他漢字用 pypinyin。
+    檢查時比音節而不是比字：台灣念法（垃圾念ㄌㄜˋ ㄙㄜˋ）會被辨識成別的字（樂色），比字會誤判成念錯"""
+    out = []
+    for tok in re.split(r"(\{[a-z]+[1-5]\})", text):
+        if tok.startswith("{"):
+            out.append(tok[1:-2])
+        else:
+            tok = tok.translate(str.maketrans("0123456789", "零一二三四五六七八九"))
+            h = re.sub(r"[^\u4e00-\u9fff]", "", R["t2s"].convert(tok))
+            out += R["lazy_pinyin"](h) if h else []
+    return [x.replace("ü", "v") for x in out]
 
 
 def main():
@@ -45,8 +55,9 @@ def main():
     ap.add_argument("--cfg", type=float, default=2.0)
     ap.add_argument("--steps", type=int, default=10)
     ap.add_argument("--custom", help="自訂發音 JSON 檔，例如 {\"和\": \"ㄏㄢˋ\", \"垃圾\": \"ㄌㄜˋ ㄙㄜˋ\"}")
-    ap.add_argument("--check", action="store_true", help="用 SenseVoice 檢查每句：不是華語或錯字率超過 --max-cer 就換 seed 重念")
+    ap.add_argument("--check", action="store_true", help="用 SenseVoice 檢查每句：不是華語或音節錯誤率超過 --max-cer 就換 seed 重念")
     ap.add_argument("--max-cer", type=float, default=0.15)
+    ap.add_argument("--asr", default="iic/SenseVoiceSmall", help="--check 用的辨識模型（名稱或本機資料夾）")
     ap.add_argument("--show", action="store_true", help="只印出轉換後送進模型的文字，不念")
     a = ap.parse_args()
 
@@ -80,7 +91,7 @@ def main():
     asr = None
     if a.check:
         from funasr import AutoModel
-        asr = AutoModel(model="iic/SenseVoiceSmall", disable_update=True, device="cpu")
+        asr = AutoModel(model=a.asr, disable_update=True, device="cpu")
 
     parts = []
     for i, s in enumerate(sents, 1):
@@ -98,10 +109,10 @@ def main():
             os.remove(tmp)
             m = re.match(r"<\|(\w+)\|>", r)
             lang = m.group(1) if m else "?"
-            want = han(plain(R, s))
-            cer = edit_distance(want, han(R["t2s"].convert(re.sub(r"<\|[^|]*\|>", "", r)))) / max(1, len(want))
+            want = syllables(R, sent)
+            cer = edit_distance(want, syllables(R, re.sub(r"<\|[^|]*\|>", "", r))) / max(1, len(want))
             score = cer + (0 if lang == "zh" else 1)
-            note = f" seed {seed}：{lang} 錯字率 {cer:.2f}"
+            note = f" seed {seed}：{lang} 音節錯誤率 {cer:.2f}"
             if best is None or score < best[0]:
                 best = (score, wav, note)
             if lang == "zh" and cer <= a.max_cer:

@@ -29,7 +29,7 @@ python -m taiwan.fetch_data      # 下載 g2pW（約 600 MB）與教育部辭典
 # 念一段話
 python -m taiwan.say "垃圾要分類，星期三收。" out.wav
 
-# 用自己的聲音（只取音色）、加風格、每句用 SenseVoice 檢查，念成粵語或錯字多就換 seed 重念
+# 用自己的聲音（只取音色）、加風格、每句用 SenseVoice 檢查，念成粵語或音節不對（例如垃圾念成ㄌㄚ ㄐㄧ）就換 seed 重念
 python -m taiwan.say --file 稿子.txt out.wav --ref 我的聲音.wav --style "充滿活力、開朗熱情，語調上揚，語速稍快" --check
 
 # 只看送進模型的文字
